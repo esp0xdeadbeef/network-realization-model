@@ -323,7 +323,21 @@ let
           fail "NR_SCHEMA_VALIDATION_FAILED" "/schemaRevision" "NR_SCHEMA_UNKNOWN";
       schemaValidation = schema.validateBundle candidate;
     in
-    builtins.deepSeq [ _producer _coverage _scope _schemaRevision schemaValidation ] candidate;
+    builtins.deepSeq [ _producer _coverage _scope _schemaRevision schemaValidation ] (
+      candidate
+      // {
+        validation = schemaValidation // {
+          validator = "network-realization-schema";
+          validationIdentity = builtins.hashString "sha256" (
+            builtins.toJSON {
+              artifactIdentity = candidate.bundleIdentity;
+              schemaSetIdentity = schema.schemaSetIdentity;
+              scopeIdentity = candidate.requestScope.identity;
+            }
+          );
+        };
+      }
+    );
 
   realize =
     args:

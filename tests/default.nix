@@ -46,6 +46,9 @@ let
   };
 in
 assert schema.validateBundle first != { };
+assert first.validation.valid;
+assert first.validation.artifactIdentity == first.bundleIdentity;
+assert first.validation.schemaSetIdentity == schema.schemaSetIdentity;
 assert model.assertDeterministic { inherit first second; };
 assert coverage.sourceCount == coverage.destinationCount;
 assert coverage.sourceCount == coverage.coverageCount;
