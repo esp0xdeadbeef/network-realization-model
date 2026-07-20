@@ -1,5 +1,15 @@
 let
   controlPlaneModel = {
+    canonicalInterfaces = [
+      {
+        canonicalPath = "/network/data/canonicalInterfaces/0";
+        identity.name = "lan0";
+        type.ianaIdentity = "iana-if-type:ethernetCsmacd";
+        description = "explicit fixture tenant interface";
+        enabled = true;
+        mtu = 1500;
+      }
+    ];
     data.example.site = {
       runtimeTargets.router = {
         role = "core";
