@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema/8b80339aa1344e1ad178045635bac45fbf36191d";
+    network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
   };
 
