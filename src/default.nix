@@ -403,6 +403,68 @@ let
       target = expectedTarget;
       requestScope = bundle.requestScope;
     };
+
+  validateRendererInput =
+    {
+      bundle,
+      expectedTarget,
+      platformBinding ? null,
+    }:
+    let
+      bundleValidation = schema.validateBundle bundle;
+      releaseValidation = bundle.validation or { };
+      _released =
+        if
+          (releaseValidation.valid or false) == true
+          && (releaseValidation.artifactIdentity or null) == bundle.bundleIdentity
+          && (releaseValidation.schemaSetIdentity or null) == schema.schemaSetIdentity
+        then
+          true
+        else
+          fail "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation"
+            "bundle lacks the schema- and digest-bound release validation";
+      _target = requireString "NR_RENDERER_TARGET_INVALID" "/expectedTarget" expectedTarget;
+      bindingValidation =
+        if platformBinding == null then
+          null
+        else
+          let
+            release = platformBinding.validation or { };
+            _bindingReleased =
+              if
+                (release.valid or false) == true
+                && (release.artifactIdentity or null) == platformBinding.bindingIdentity
+                && (release.schemaSetIdentity or null) == schema.schemaSetIdentity
+              then
+                true
+              else
+                fail "NR_PLATFORM_BINDING_UNVALIDATED" "/validation"
+                  "platform binding lacks the schema- and digest-bound validation";
+            checked = validatePlatformBindingAgainstBundle {
+              inherit bundle expectedTarget;
+              binding = platformBinding;
+            };
+          in
+          builtins.deepSeq _bindingReleased checked;
+      semanticModel = bundle.network.data;
+      controlPlaneEnvelope =
+        if semanticModel ? control_plane_model then
+          semanticModel
+        else
+          { control_plane_model = semanticModel; };
+    in
+    builtins.deepSeq [ bundleValidation _released _target bindingValidation ] {
+      inherit
+        bindingValidation
+        bundleValidation
+        controlPlaneEnvelope
+        expectedTarget
+        semanticModel
+        ;
+      bundleIdentity = bundle.bundleIdentity;
+      bindingIdentity = if platformBinding == null then null else platformBinding.bindingIdentity;
+      requestScope = bundle.requestScope;
+    };
 in
 {
   inherit
@@ -414,6 +476,7 @@ in
     sourceDigestFor
     validatePlatformBindingAgainstBundle
     validateProducerAccounting
+    validateRendererInput
     validateScope
     validateUpstreamCoverage
     ;
