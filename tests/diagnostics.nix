@@ -74,6 +74,25 @@ let
       };
     }
   );
+  released = model.realize args;
+  bindingBase = {
+    kind = schema.schema.platformBinding.kind;
+    schemaRevision = schema.schema.platformBinding.revision;
+    bundleIdentity = released.bundleIdentity;
+    target = "nixos";
+    requestScope = released.requestScope;
+    categories = { };
+    provenance = {
+      producer = "fixture";
+      producerRevision = "fixture";
+    };
+  };
+  bindingWithIdentity = bindingBase // {
+    bindingIdentity = schema.computeBindingIdentity bindingBase;
+  };
+  releasedBinding = bindingWithIdentity // {
+    validation = schema.validatePlatformBinding bindingWithIdentity;
+  };
 in
 {
   requiredAuthorityMissing = {
@@ -169,6 +188,29 @@ in
     value = model.release {
       inherit input;
       candidate = wrongSchema;
+    };
+  };
+  rendererBundleUnvalidated = {
+    expected = "NR_RENDERER_BUNDLE_UNVALIDATED: /validation:";
+    value = model.validateRendererInput {
+      bundle = builtins.removeAttrs released [ "validation" ];
+      expectedTarget = "nixos";
+    };
+  };
+  rendererBindingUnvalidated = {
+    expected = "NR_PLATFORM_BINDING_UNVALIDATED: /validation:";
+    value = model.validateRendererInput {
+      bundle = released;
+      platformBinding = bindingWithIdentity;
+      expectedTarget = "nixos";
+    };
+  };
+  rendererBindingTargetMismatch = {
+    expected = "NR_PLATFORM_BINDING_TARGET_MISMATCH: /target:";
+    value = model.validateRendererInput {
+      bundle = released;
+      platformBinding = releasedBinding;
+      expectedTarget = "clab";
     };
   };
 }

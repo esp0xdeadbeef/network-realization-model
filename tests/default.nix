@@ -32,8 +32,11 @@ let
       sourceIdentity = "fixture-binding";
     };
   };
-  binding = bindingBase // {
+  bindingWithIdentity = bindingBase // {
     bindingIdentity = schema.computeBindingIdentity bindingBase;
+  };
+  binding = bindingWithIdentity // {
+    validation = schema.validatePlatformBinding bindingWithIdentity;
   };
   coverage = model.validateUpstreamCoverage {
     inherit input;
@@ -42,6 +45,11 @@ let
   bindingValidation = model.validatePlatformBindingAgainstBundle {
     bundle = first;
     inherit binding;
+    expectedTarget = "openconfig";
+  };
+  rendererInput = model.validateRendererInput {
+    bundle = first;
+    platformBinding = binding;
     expectedTarget = "openconfig";
   };
 in
@@ -53,4 +61,7 @@ assert model.assertDeterministic { inherit first second; };
 assert coverage.sourceCount == coverage.destinationCount;
 assert coverage.sourceCount == coverage.coverageCount;
 assert bindingValidation.valid;
+assert rendererInput.bundleIdentity == first.bundleIdentity;
+assert rendererInput.bindingIdentity == binding.bindingIdentity;
+assert rendererInput.controlPlaneEnvelope.control_plane_model == first.network.data;
 true

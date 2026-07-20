@@ -65,6 +65,13 @@ Renderer-consumption coverage and rendered-output coverage remain the
 responsibility of each renderer; they are separate from this repository's
 upstream realization coverage.
 
+`lib.validateRendererInput` is the common renderer-entry boundary. It requires
+the schema- and digest-bound bundle release record, validates the optional
+normalized platform-binding bundle against the exact bundle, scope, and target,
+and returns the canonical semantic model plus an internal CPM compatibility
+envelope. The compatibility envelope is not a public renderer input and does
+not authorize raw CPM entry.
+
 ## Planned repository layout
 
 ```text
