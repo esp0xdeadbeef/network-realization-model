@@ -72,7 +72,7 @@ and returns the canonical semantic model plus an internal CPM compatibility
 envelope. The compatibility envelope is not a public renderer input and does
 not authorize raw CPM entry.
 
-## Planned repository layout
+## Repository layout
 
 ```text
 src/          canonical bundle construction, normalization, and validation
@@ -81,9 +81,9 @@ examples/     small CPM-to-bundle examples and expected diagnostics
 flake.nix     pinned build, check, and development entry points
 ```
 
-The exact implementation is added through the controlled design and
-construction chain. Gaps in an upstream or schema contract must fail visibly
-and be fixed in the owning layer rather than hidden in local defaults.
+The implementation follows the controlled design and construction chain. Gaps
+in an upstream or schema contract must fail visibly and be fixed in the owning
+layer rather than hidden in local defaults.
 
 ## Versioning
 
