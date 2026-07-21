@@ -51,6 +51,16 @@ let
     );
   badRule = replaceFirstCoverage (row: row // { transformationRule = "unknown-rule"; });
   badProvenance = replaceFirstCoverage (row: builtins.removeAttrs row [ "sourceArtifactIdentity" ]);
+  badDestination = replaceFirstCoverage (row: row // { destinationPath = "/network/data/invented/path"; });
+  orphanPath = rehash (
+    candidate
+    // {
+      network.data = candidate.network.data // {
+        orphanField = "orphan-value";
+      };
+    }
+  );
+  unsupportedRequired = replaceFirstCoverage (row: row // { classification = "rejected-unsupported"; });
   protectedMaterial = rehash (
     candidate
     // {
@@ -154,6 +164,27 @@ in
     value = model.validateUpstreamCoverage {
       inherit input;
       candidate = badRule;
+    };
+  };
+  destinationInvalid = {
+    expected = "NR_UPSTREAM_DESTINATION_INVALID:";
+    value = model.validateUpstreamCoverage {
+      inherit input;
+      candidate = badDestination;
+    };
+  };
+  orphanCanonical = {
+    expected = "NR_ORPHAN_CANONICAL_PATH:";
+    value = model.validateUpstreamCoverage {
+      inherit input;
+      candidate = orphanPath;
+    };
+  };
+  unsupportedRequirement = {
+    expected = "NR_UNSUPPORTED_REQUIRED_SEMANTIC:";
+    value = model.validateUpstreamCoverage {
+      inherit input;
+      candidate = unsupportedRequired;
     };
   };
   provenanceIncomplete = {
