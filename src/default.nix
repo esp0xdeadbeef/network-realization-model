@@ -32,11 +32,27 @@ let
 
   duplicates =
     values:
-    builtins.filter (value: builtins.length (builtins.filter (item: item == value) values) > 1) (
-      unique values
-    );
+    let
+      counts = builtins.foldl' (
+        acc: v:
+        acc
+        // {
+          ${v} =
+            (if builtins.hasAttr v acc then builtins.getAttr v acc else 0) + 1;
+        }
+      ) { } values;
+    in
+    builtins.filter (key: builtins.getAttr key counts > 1) (builtins.attrNames counts);
 
-  difference = left: right: builtins.filter (value: !(builtins.elem value right)) left;
+  difference =
+    left: right:
+    let
+      rightSet = builtins.listToAttrs (map (v: {
+        name = v;
+        value = true;
+      }) right);
+    in
+    builtins.filter (v: !(builtins.hasAttr v rightSet)) left;
 
   hasPrefix =
     prefix: value:
@@ -463,6 +479,7 @@ let
         ;
       bundleIdentity = bundle.bundleIdentity;
       bindingIdentity = if platformBinding == null then null else platformBinding.bindingIdentity;
+      validatedPlatformBinding = platformBinding;
       requestScope = bundle.requestScope;
     };
 in
