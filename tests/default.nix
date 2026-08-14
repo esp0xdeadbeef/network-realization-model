@@ -63,5 +63,6 @@ assert coverage.sourceCount == coverage.coverageCount;
 assert bindingValidation.valid;
 assert rendererInput.bundleIdentity == first.bundleIdentity;
 assert rendererInput.bindingIdentity == binding.bindingIdentity;
+assert rendererInput.validatedPlatformBinding == binding;
 assert rendererInput.controlPlaneEnvelope.control_plane_model == first.network.data;
 true
