@@ -33,16 +33,9 @@ let
   duplicates =
     values:
     let
-      counts = builtins.foldl' (
-        acc: v:
-        acc
-        // {
-          ${v} =
-            (if builtins.hasAttr v acc then builtins.getAttr v acc else 0) + 1;
-        }
-      ) { } values;
+      grouped = builtins.groupBy (v: toString v) values;
     in
-    builtins.filter (key: builtins.getAttr key counts > 1) (builtins.attrNames counts);
+    builtins.filter (key: builtins.length grouped.${key} > 1) (builtins.attrNames grouped);
 
   difference =
     left: right:
