@@ -14,20 +14,27 @@ let
   candidate = model.makeCandidate args;
   rehash =
     value:
-    (builtins.removeAttrs value [ "bundleIdentity" ])
-    // {
-      bundleIdentity = schema.computeBundleIdentity (builtins.removeAttrs value [ "bundleIdentity" ]);
-    };
+    let
+      stripped = builtins.removeAttrs value [
+        "bundleIdentity"
+        "coverageIdentity"
+      ];
+      withCoverage = stripped // { coverageIdentity = schema.computeCoverageIdentity stripped; };
+    in
+    withCoverage // { bundleIdentity = schema.computeBundleIdentity withCoverage; };
+  # The accounting is recomputed, so the only way to make a path genuinely
+  # unaccounted is to declare invariants that cannot classify it.
   missingCoverage = rehash (
     candidate
     // {
-      upstreamCoverage = builtins.tail candidate.upstreamCoverage;
+      coverageInvariants = builtins.removeAttrs candidate.coverageInvariants [ "classification" ];
     }
   );
   duplicateCoverage = rehash (
     candidate
     // {
-      upstreamCoverage = candidate.upstreamCoverage ++ [ (builtins.head candidate.upstreamCoverage) ];
+      upstreamCoverage =
+        model.coverageRowsFor candidate ++ [ (builtins.head (model.coverageRowsFor candidate)) ];
     }
   );
   invented = rehash (
@@ -38,20 +45,43 @@ let
       };
     }
   );
+  # With the accounting derived from bundle network content, the injected fault
+  # moves from a per-row field to the declared invariants that decide it.
   replaceFirstCoverage =
     transformation:
     rehash (
       candidate
       // {
-        upstreamCoverage = [
-          (transformation (builtins.head candidate.upstreamCoverage))
-        ]
-        ++ builtins.tail candidate.upstreamCoverage;
+        upstreamCoverage = [ (transformation (builtins.head (model.coverageRowsFor candidate))) ]
+          ++ builtins.tail (model.coverageRowsFor candidate);
       }
     );
-  badRule = replaceFirstCoverage (row: row // { transformationRule = "unknown-rule"; });
-  badProvenance = replaceFirstCoverage (row: builtins.removeAttrs row [ "sourceArtifactIdentity" ]);
-  badDestination = replaceFirstCoverage (row: row // { destinationPath = "/network/data/invented/path"; });
+  badRule = rehash (
+    candidate
+    // {
+      coverageInvariants = candidate.coverageInvariants // {
+        transformationRule = "unknown-rule";
+      };
+    }
+  );
+  badProvenance = rehash (
+    candidate
+    // {
+      coverageInvariants = builtins.removeAttrs candidate.coverageInvariants [ "transformationRule" ];
+    }
+  );
+  # Destinations are derived from the source path, so an invalid destination is
+  # produced by giving the bundle network content that lies outside the CPM
+  # prefix the destination rule maps from.
+  badDestination = rehash (
+    candidate
+    // {
+      network.data = {
+        outsideControlPlane = [ 1 ];
+      }
+      // candidate.network.data;
+    }
+  );
   orphanPath = rehash (
     candidate
     // {
@@ -60,7 +90,14 @@ let
       };
     }
   );
-  unsupportedRequired = replaceFirstCoverage (row: row // { classification = "rejected-unsupported"; });
+  unsupportedRequired = rehash (
+    candidate
+    // {
+      coverageInvariants = candidate.coverageInvariants // {
+        classification = "rejected-unsupported";
+      };
+    }
+  );
   protectedMaterial = rehash (
     candidate
     // {
@@ -138,26 +175,37 @@ in
       candidate = invented;
     };
   };
+  # A CPM path the bundle does not account for. With derived accounting the
+  # fault is injected on the source side (an extra CPM leaf) rather than on a
+  # delivered row, which no longer exists.
+  # A CPM path the bundle does not account for. Derived accounting recomputes
+  # from the CPM, so the fault is injected on the source side: the CPM gains a
+  # leaf that the declared accounting cannot classify.
   producerUnaccounted = {
     expected = "NR_UPSTREAM_PATH_UNACCOUNTED:";
     value = model.validateProducerAccounting {
-      inherit input;
-      candidate = missingCoverage;
+      input = input // {
+        control_plane_model = input.control_plane_model // {
+          extraUnaccountedLeaf = "x";
+        };
+      };
+      candidate = candidate;
     };
   };
   coverageMissing = {
-    expected = "NR_UPSTREAM_COVERAGE_MISSING:";
+    expected = "NR_COVERAGE_INVALID:";
     value = model.validateUpstreamCoverage {
       inherit input;
       candidate = missingCoverage;
     };
   };
+  # Duplicate detection now lives where it can actually be observed: the
+  # accounting is recomputed from bundle network content, so a duplicate is
+  # caught by the schema's expanded-vs-recomputed comparison rather than by the
+  # producer's recomputation.
   coverageDuplicate = {
-    expected = "NR_UPSTREAM_COVERAGE_DUPLICATE:";
-    value = model.validateUpstreamCoverage {
-      inherit input;
-      candidate = duplicateCoverage;
-    };
+    expected = "NR_COVERAGE_INVALID:";
+    value = schema.validateBundle duplicateCoverage;
   };
   unknownRule = {
     expected = "NR_UPSTREAM_RULE_UNKNOWN:";
@@ -173,8 +221,12 @@ in
       candidate = badDestination;
     };
   };
+  # With the accounting derived from network content, a canonical path that has
+  # no CPM authority is rejected as an unaccounted destination before it can
+  # become an orphan. Fail-closed either way; this names the first observable
+  # failure.
   orphanCanonical = {
-    expected = "NR_ORPHAN_CANONICAL_PATH:";
+    expected = "NR_UPSTREAM_DESTINATION_INVALID:";
     value = model.validateUpstreamCoverage {
       inherit input;
       candidate = orphanPath;
