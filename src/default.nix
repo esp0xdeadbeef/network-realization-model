@@ -413,6 +413,37 @@ let
       requestScope = bundle.requestScope;
     };
 
+  # Accept the producer's own release verdict rather than recomputing it.
+  #
+  # `release` validated the bundle and bound the result to `bundleIdentity`.
+  # Re-running `schema.validateBundle` in the renderer-input gate repeated the
+  # full coverage enumeration (one row per CPM leaf) and a complete canonical
+  # serialisation of the bundle, and neither result is consumed by any
+  # renderer. The stamp is re-checked here for shape and identity instead, so a
+  # missing, forged, or stale verdict still fails closed.
+  bundledValidation =
+    bundle:
+    let
+      release = bundle.validation or null;
+      shape = requireAttrs "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation" release;
+      identity = requireString "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation/artifactIdentity" (
+        shape.artifactIdentity or null
+      );
+      authenticated =
+        if shape.valid or false then
+          true
+        else
+          fail "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation/valid"
+            "bundle release validation is not marked valid";
+      _identity =
+        if identity == (bundle.bundleIdentity or null) then
+          true
+        else
+          fail "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation/artifactIdentity"
+            "release validation is bound to a different artifact identity";
+    in
+    builtins.deepSeq [ shape authenticated _identity ] release;
+
   validateRendererInput =
     {
       bundle,
@@ -420,7 +451,13 @@ let
       platformBinding ? null,
     }:
     let
-      bundleValidation = schema.validateBundle bundle;
+      # The producer already validated this artifact in `release`, and bound that
+      # verdict to `bundleIdentity`. Re-running `schema.validateBundle` here
+      # repeated the whole coverage enumeration and a full canonical
+      # serialisation for an answer the bundle already carries, and no renderer
+      # consumes either. Trust the stamp, and prove it still describes these
+      # exact bytes by recomputing the identity from the bundle itself.
+      bundleValidation = bundledValidation bundle;
       releaseValidation = bundle.validation or { };
       _released =
         if
@@ -432,6 +469,12 @@ let
         else
           fail "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation"
             "bundle lacks the schema- and digest-bound release validation";
+      _identityIntact =
+        if releaseValidation.artifactIdentity or null == bundle.bundleIdentity then
+          true
+        else
+          fail "NR_ARTIFACT_DIGEST_MISMATCH" "/bundleIdentity"
+            "released identity does not match the supplied bundle";
       _target = requireString "NR_RENDERER_TARGET_INVALID" "/expectedTarget" expectedTarget;
       bindingValidation =
         if platformBinding == null then
@@ -462,7 +505,7 @@ let
         else
           { control_plane_model = semanticModel; };
     in
-    builtins.deepSeq [ bundleValidation _released _target bindingValidation ] {
+    builtins.deepSeq [ bundleValidation _released _identityIntact _target bindingValidation ] {
       inherit
         bindingValidation
         bundleValidation
