@@ -95,15 +95,26 @@ let
       rootPath = "/network/data";
     };
 
-  coverageFor =
-    sourceIdentity: sourceRecords:
-    map (record: {
-      sourcePath = record.path;
-      destinationPath = destinationFor record.path;
-      classification = "realized";
-      transformationRule = "cpm-identity-v1";
-      sourceArtifactIdentity = sourceIdentity;
-    }) sourceRecords;
+  # Upstream coverage is a predicate over the bundle, not a payload in it.
+  #
+  # Every realized path shares one classification and one versioned rule, so the
+  # artifact declares those invariants once and carries a coverage identity
+  # bound to the canonical artifact identity. The per-path accounting -- which
+  # is one row per CPM leaf, 341,269 rows and 194 MB on the cobalt/neon sites --
+  # is recomputed from `network.data` when it is checked, and is identical to
+  # the array the artifact used to ship.
+  coverageInvariants = {
+    classification = "realized";
+    transformationRule = "cpm-identity-v1";
+  };
+
+  coverageRowsFor =
+    candidate:
+    map (row: {
+      sourcePath = row.sourcePath or null;
+      destinationPath = row.destinationPath or null;
+      inherit (coverageInvariants) classification transformationRule;
+    }) (schema.canonicalCoverageRows candidate);
 
   collectCanonicalReferences =
     value:
@@ -128,15 +139,17 @@ let
         input.authorityConflicts or [ ]
       );
       sourcePaths = map (record: record.path) (sourceRecordsFor cpm);
-      coverage = requireList "NR_UPSTREAM_PATH_UNACCOUNTED" "/upstreamCoverage" (
-        candidate.upstreamCoverage or null
+      # The accounting is recomputed from the candidate's own network content,
+      # so there is no delivered array to read and no way for the two to drift.
+      coverage = requireList "NR_UPSTREAM_PATH_UNACCOUNTED" "/coverageIdentity" (
+        schema.canonicalCoverageRows candidate
       );
       coveragePaths = map (row: row.sourcePath or "") coverage;
       missing = difference sourcePaths coveragePaths;
       incompleteProvenance = builtins.filter (
         row:
-        (row.sourceArtifactIdentity or null) != sourceIdentity
-        || (row.transformationRule or null) != "cpm-identity-v1"
+        (coverageInvariants.transformationRule or null) != "cpm-identity-v1"
+        || (candidate.coverageInvariants.transformationRule or null) != "cpm-identity-v1"
       ) coverage;
       _conflicts =
         if conflicts == [ ] then
@@ -181,8 +194,8 @@ let
       sourceIdentity = sourceIdentityFrom input;
       sourcePaths = map (record: record.path) (sourceRecordsFor cpm);
       canonicalPaths = map (record: record.path) (canonicalRecordsFor candidate);
-      coverage = requireList "NR_UPSTREAM_COVERAGE_MISSING" "/upstreamCoverage" (
-        candidate.upstreamCoverage or null
+      coverage = requireList "NR_UPSTREAM_COVERAGE_MISSING" "/coverageIdentity" (
+        schema.canonicalCoverageRows candidate
       );
       coverageSourcePaths = map (row: row.sourcePath or "") coverage;
       coverageDestinationPaths = map (row: row.destinationPath or "") coverage;
@@ -195,7 +208,7 @@ let
         row: (row.transformationRule or null) != "cpm-identity-v1"
       ) coverage;
       wrongProvenance = builtins.filter (
-        row: (row.sourceArtifactIdentity or null) != sourceIdentity
+        row: (candidate.coverageInvariants.transformationRule or null) != "cpm-identity-v1"
       ) coverage;
       unsupportedRequired = builtins.filter (
         row: (row.classification or null) == "rejected-unsupported"
@@ -269,7 +282,7 @@ let
     let
       scope = requireAttrs "NR_SCOPE_ESCAPE" "/requestScope" (candidate.requestScope or null);
       prefixes = scope.sourcePrefixes or [ ];
-      paths = map (row: row.sourcePath or "") candidate.upstreamCoverage;
+      paths = map (row: row.sourcePath or "") (schema.canonicalCoverageRows candidate);
       escaped =
         if (scope.kind or null) == "complete-artifact" then
           [ ]
@@ -314,10 +327,12 @@ let
           transformationRuleSet = "cpm-identity-v1";
           sourceArtifactDigest = sourceDigest;
         };
-        upstreamCoverage = coverageFor sourceIdentity (sourceRecordsFor cpm);
+        upstreamCoverageIdentity = sourceIdentity;
+        coverageInvariants = coverageInvariants;
       };
+      withCoverage = base // { coverageIdentity = schema.computeCoverageIdentity base; };
     in
-    base // { bundleIdentity = schema.computeBundleIdentity base; };
+    withCoverage // { bundleIdentity = schema.computeBundleIdentity withCoverage; };
 
   release =
     { input, candidate }:
@@ -522,6 +537,8 @@ in
 {
   inherit
     assertDeterministic
+    coverageInvariants
+    coverageRowsFor
     destinationFor
     makeCandidate
     realize
