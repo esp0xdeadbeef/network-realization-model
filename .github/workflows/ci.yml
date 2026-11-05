@@ -1,0 +1,29 @@
+name: "CI"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  flake-check:
+    name: "nix flake check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      # The flake checks are this repository's test surface, so build them.
+      - name: "Check flake outputs"
+        run: nix flake check -L --show-trace
