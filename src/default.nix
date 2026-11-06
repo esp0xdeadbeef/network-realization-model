@@ -484,12 +484,22 @@ let
         else
           fail "NR_RENDERER_BUNDLE_UNVALIDATED" "/validation"
             "bundle lacks the schema- and digest-bound release validation";
+      # Recompute the identity from the bundle content. Comparing the stamped
+      # `validation.artifactIdentity` with the stamped `bundleIdentity` proves
+      # nothing about the bytes: a consumer that receives a released bundle and
+      # then has a field mutated still carries both stamps unchanged. The
+      # recomputation is one hash, so the fast path stays fast while a mutated
+      # bundle is rejected instead of rendered.
+      computedIdentity = schema.computeBundleIdentity bundle;
       _identityIntact =
-        if releaseValidation.artifactIdentity or null == bundle.bundleIdentity then
+        if
+          (releaseValidation.artifactIdentity or null) == bundle.bundleIdentity
+          && computedIdentity == bundle.bundleIdentity
+        then
           true
         else
           fail "NR_ARTIFACT_DIGEST_MISMATCH" "/bundleIdentity"
-            "released identity does not match the supplied bundle";
+            "released identity does not match the supplied bundle content";
       _target = requireString "NR_RENDERER_TARGET_INVALID" "/expectedTarget" expectedTarget;
       bindingValidation =
         if platformBinding == null then
