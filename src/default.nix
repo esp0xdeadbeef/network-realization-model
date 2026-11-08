@@ -116,6 +116,44 @@ let
       inherit (coverageInvariants) classification transformationRule;
     }) (schema.canonicalCoverageRows candidate);
 
+  # FS-161: protected references are opaque runtime references, not material.
+  # The CPM carries them as filesystem paths (deployment/runtime secret files).
+  # Projecting every such leaf into `protectedReferences` makes the schema's
+  # protected-material checks load-bearing for real bundles instead of only for
+  # fixtures, and gives consumers one complete list to bind against.
+  protectedReferencePrefix = "/run/secrets/";
+
+  collectProtectedReferences =
+    value:
+    if builtins.isString value then
+      (if hasPrefix protectedReferencePrefix value then [ value ] else [ ])
+    else if builtins.isAttrs value then
+      builtins.concatLists (map (name: collectProtectedReferences value.${name}) (builtins.attrNames value))
+    else if builtins.isList value then
+      builtins.concatLists (map collectProtectedReferences value)
+    else
+      [ ];
+
+  # Deterministic union of the references the bundle actually carries and any
+  # explicitly supplied ones. Completeness is guaranteed by construction: a
+  # producer cannot release a bundle that omits a reference its own content
+  # names.
+  protectedReferencesFor =
+    { cpm, declared }:
+    let
+      derived = map (reference: { inherit reference; classification = "protected"; }) (
+        unique (collectProtectedReferences cpm)
+      );
+      declaredRecords = requireList "NR_PROTECTED_VALUE_EXPOSED" "/protectedReferences" declared;
+      byReference = builtins.listToAttrs (
+        map (record: {
+          name = record.reference;
+          value = record;
+        }) (derived ++ declaredRecords)
+      );
+    in
+    map (name: byReference.${name}) (builtins.attrNames byReference);
+
   collectCanonicalReferences =
     value:
     if builtins.isAttrs value then
@@ -127,6 +165,23 @@ let
       )
     else if builtins.isList value then
       builtins.concatLists (map collectCanonicalReferences value)
+    else
+      [ ];
+
+  # FS-161: a platform binding may reference protected material, but only a
+  # reference the canonical bundle already declares. A binding that names its
+  # own secret path is adding a second, unvalidated authority (and could point
+  # at material the bundle never accounted for).
+  collectProtectedReferencePaths =
+    value:
+    if builtins.isAttrs value then
+      builtins.concatLists (
+        map (name: collectProtectedReferencePaths value.${name}) (builtins.attrNames value)
+      )
+    else if builtins.isList value then
+      builtins.concatLists (map collectProtectedReferencePaths value)
+    else if builtins.isString value then
+      (if hasPrefix "/run/secrets/" value then [ value ] else [ ])
     else
       [ ];
 
@@ -308,12 +363,17 @@ let
     }:
     let
       cpm = cpmFrom input;
+      resolvedProtectedReferences = protectedReferencesFor {
+        inherit cpm;
+        declared = protectedReferences;
+      };
       sourceIdentity = sourceIdentityFrom input;
       sourceDigest = sourceDigestFor cpm;
       base = {
         kind = schema.schema.bundle.kind;
         schemaRevision = schema.schema.bundle.revision;
-        inherit requestScope protectedReferences;
+        inherit requestScope;
+        protectedReferences = resolvedProtectedReferences;
         sources.cpm = {
           identity = sourceIdentity;
           digest = sourceDigest;
@@ -397,6 +457,11 @@ let
       referenceExists =
         reference: builtins.any (path: path == reference || hasPrefix "${reference}/" path) canonicalPaths;
       missingReferences = builtins.filter (reference: !(referenceExists reference)) references;
+      declaredProtected = map (record: record.reference or null) (bundle.protectedReferences or [ ]);
+      bindingProtected = unique (collectProtectedReferencePaths binding.categories);
+      undeclaredProtected = builtins.filter (
+        reference: !(builtins.elem reference declaredProtected)
+      ) bindingProtected;
       _bundle =
         if binding.bundleIdentity == bundle.bundleIdentity then
           true
@@ -419,8 +484,16 @@ let
         else
           fail "NR_PLATFORM_BINDING_REFERENCE_MISSING" (builtins.head missingReferences)
             "canonical object is absent";
+      _protected =
+        if undeclaredProtected == [ ] then
+          true
+        else
+          fail "NR_PLATFORM_BINDING_REFERENCE_MISSING" (builtins.head undeclaredProtected)
+            "protected reference is not declared by the canonical bundle";
     in
-    builtins.deepSeq [ bundleValidation bindingValidation _bundle _target _scope _references ] {
+    builtins.deepSeq
+      [ bundleValidation bindingValidation _bundle _target _scope _references _protected ]
+      {
       valid = true;
       bundleIdentity = bundle.bundleIdentity;
       bindingIdentity = binding.bindingIdentity;
@@ -551,6 +624,7 @@ in
     coverageRowsFor
     destinationFor
     makeCandidate
+    protectedReferencesFor
     realize
     release
     sourceDigestFor
