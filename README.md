@@ -72,6 +72,42 @@ and returns the canonical semantic model plus an internal CPM compatibility
 envelope. The compatibility envelope is not a public renderer input and does
 not authorize raw CPM entry.
 
+## Known gap: CPM sibling aggregates are not carried in the bundle
+
+`bundle.network` is exactly the CPM's `control_plane_model` attribute. The CPM
+also emits sibling aggregates beside it -- `endpointAssignment`,
+`deploymentHosts` and `endpointInventory` -- and at least one of those is the
+only place a fact is recorded.
+
+`network-control-plane-model` `src/main.nix` builds a top-level
+`endpointAssignment` from `cpm/hat-endpoint-assignment.nix`, derived from the
+inventory's `deployment.hosts`. That aggregate is the only place an endpoint is
+marked `role = "management"`; the per-site `endpointAssignment` records produced
+by `cpm/Site/build-data/endpoint-assignment.nix` carry `bridge`, `tenant` and the
+address fields but no `role`.
+
+`network-renderer-access-endpoint-nixos` enforces
+`FS-725-HDS-020-SDS-010-SMS-010: EMPTY_MANAGEMENT_ENDPOINT_INVENTORY` when a
+`mgmt` bridge is declared but no endpoint assignment on it is marked management.
+Because the bundle drops the aggregate, that guard cannot be satisfied for any
+input whose management fact lives only there, and the host module is
+un-evaluatable: `FS-720-HDS-010-SDS-020-SMS-020` fails inside AP-1 with that
+diagnostic even though the CPM output does record the role (verified: 3
+assignments with `role = "management"` on `mgmt` for the
+`emulated-isp-residential-testnet` fixture).
+
+This is not fixable inside a renderer or a test. The options are:
+
+1. carry the sibling aggregates in `network.data` (a schema change: the bundle
+   shape, `computeBundleIdentity` and every digest-bound consumer move together);
+2. have the CPM record `role` on the per-site `endpointAssignment` as well, so
+   the fact survives without widening the bundle; or
+3. re-derive the management fact from `deploymentHosts` in whoever consumes it,
+   which needs the aggregate carried anyway.
+
+Whichever is chosen, it is a change to the CPM/bundle contract and must be made
+with the owning repositories' schema tests in the same commit.
+
 ## Repository layout
 
 ```text
