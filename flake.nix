@@ -55,6 +55,23 @@
           inputPath = "${realRow}/intent.nix";
           inventoryPath = "${realRow}/inventory-nixos.nix";
         };
+      realBundleFor =
+        system:
+        model.realize {
+          input = {
+            kind = "network-control-plane-artifact";
+            artifactIdentity = "real-cpm-${realTrace}";
+            artifactDigest = builtins.hashString "sha256"
+              (builtins.toJSON (realCpmFor system).control_plane_model);
+            inherit ((realCpmFor system)) control_plane_model;
+          };
+          requestScope = {
+            kind = "complete-artifact";
+            identity = "real-${realTrace}";
+          };
+          rootLockIdentity = "network-realization-model-flake-lock";
+          producerRevision = network-control-plane-model.rev or "network-control-plane-model";
+        };
       testsPassFor = system:
         import ./tests/default.nix {
           inherit model schema;
@@ -79,10 +96,17 @@
             producerRevision = "fixture-realization-model";
           };
           artifact = pkgs.writeText "network-realization-bundle.json" (builtins.toJSON bundle);
+
+          # The bundle realized from a CPM the real producer compiled (see
+          # `realBundleFor`). Kept separate from `example-bundle`, which wraps
+          # the hand-written fixture in examples/cpm-result.nix.
+          realBundleArtifact = pkgs.writeText "network-realization-real-bundle.json"
+            (builtins.toJSON (realBundleFor system));
         in
         {
           default = artifact;
           example-bundle = artifact;
+          real-bundle = realBundleArtifact;
         }
       );
 
@@ -124,6 +148,75 @@
             mkdir -p "$out"
             cp "${self.packages.${system}.example-bundle}" "$out/bundle.json"
           '';
+
+          # A realized bundle must carry CANONICAL network content, not the
+          # producer's data passed through under a validation wrapper.
+          #
+          # THIS CHECK CURRENTLY FAILS, on purpose. It is the guard for the
+          # architectural defect that the whole renderer fleet inherits, and it
+          # must not be made to pass by teaching this check to accept the raw
+          # shape.
+          #
+          # Measured 2026-11-21, for a CPM compiled by the real producer from
+          # row FS-540-HDS-010-SDS-010-SMS-020:
+          #
+          #   bundle.network.data keys: [ data, secretAuthorization,
+          #     secretDeliveryRecords, secretPlaintextGuard, secretPolicyBoundary,
+          #     secretReadiness, version ]
+          #   bundle.network.data ? canonicalInterfaces   -> false
+          #
+          # So `network.data.data` is the producer's CPM data unchanged. There is
+          # no canonicalized network content, which means every renderer's
+          # "consume the validated canonical bundle" is, in substance, consuming
+          # the CPM -- the wrapper adds validation, identity, provenance and
+          # coverage, but no canonical semantics.
+          #
+          # Consequence downstream: a renderer can only be as strict as the raw
+          # shape allows. network-renderer-openconfig demands canonical interface
+          # identity (name + IANA type) and therefore fails; the others read the
+          # same raw data and keep passing, so a missing or false canonical field
+          # is invisible to them.
+          canonical-bundle-content =
+            let
+              bundle = realBundleFor system;
+              hasCanonical = bundle.network.data ? canonicalInterfaces;
+              canonicalCount =
+                if hasCanonical then builtins.length bundle.network.data.canonicalInterfaces else 0;
+            in
+            if hasCanonical && canonicalCount > 0 then
+              pkgs.runCommand "network-realization-canonical-content" { } ''
+                touch "$out"
+              ''
+            else
+              pkgs.runCommand "network-realization-canonical-content" { } ''
+                cat >&2 <<'MESSAGE'
+            FAIL canonical-bundle-content: the realized bundle carries no canonical network content.
+
+              bundle.network.data is the producer's CPM data unchanged (sites,
+              secret projections, version). It has no canonicalInterfaces, no
+              canonical routes, no canonical anything -- the bundle adds
+              validation, identity, provenance and coverage around the raw CPM,
+              but does not canonicalize it.
+
+              That makes "renderers consume the validated canonical bundle" true
+              only in the sense that they consume a validated copy of the CPM.
+              A renderer can therefore only be as strict as the producer's raw
+              shape allows:
+
+                network-renderer-openconfig  requires canonical interface identity
+                                             (name + IANA type) and FAILS
+                nixos, containerlab,         read the same raw data and keep
+                wireguard, nebula,           passing, so a missing or false
+                access-endpoint              canonical field is invisible to them
+
+              Fix: this repository must emit canonical network semantics (at
+              minimum canonicalInterfaces with explicit identity and IANA type)
+              and renderers must consume that instead of the producer's data.
+              Not by relaxing the renderers -- the strict one is behaving
+              correctly.
+            MESSAGE
+                exit 1
+              '';
         }
         // diagnosticChecks
       );
