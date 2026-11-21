@@ -36,14 +36,24 @@
       schema = network-realization-schema.lib;
       model = import ./src/default.nix { inherit schema; };
       # A CPM compiled by the real producer from a real intent, per system.
-      # The hand-written example is still used for the unit cases (its shape is
-      # deliberate and its field values are asserted by every peer renderer),
-      # but nothing here may claim the production path works without this one.
+      #
+      # The row and inventory follow the same convention the renderer tests use
+      # (network-renderer-nixos: `network-labs/GAMP/SMT/<row>/intent.nix` with
+      # `inventory-nixos.nix`; containerlab: the same row with
+      # `inventory-clab.nix`). This repository is target-agnostic, so it takes
+      # the NixOS inventory of the shared row -- the bundle it validates is then
+      # the same identity path a peer renderer consumes, which is the whole
+      # point of validating one canonical bundle for many targets.
+      #
+      # No path is hardcoded: the row and the inventory are the only things
+      # named, and they are resolved against the network-labs flake input.
+      realTrace = "FS-540-HDS-010-SDS-010-SMS-020";
+      realRow = network-labs + "/GAMP/SMT/${realTrace}";
       realCpmFor =
         system:
         network-control-plane-model.libBySystem.${system}.compileAndBuildFromPaths {
-          inputPath = "${network-labs}/examples/single-wan-uplink-static-egress/intent.nix";
-          inventoryPath = "${network-labs}/examples/single-wan-uplink-static-egress/inventory-nixos.nix";
+          inputPath = "${realRow}/intent.nix";
+          inventoryPath = "${realRow}/inventory-nixos.nix";
         };
       testsPassFor = system:
         import ./tests/default.nix {
