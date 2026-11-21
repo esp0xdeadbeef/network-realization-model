@@ -5,6 +5,18 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
+
+    # A producer, so the tests can realise a REAL CPM and not only the
+    # hand-written one in examples/cpm-result.nix. This repository has no
+    # dependency cycle to fear: network-control-plane-model depends on
+    # network-forwarding-model and network-labs, neither of which depends on
+    # this one. See the note at the top of examples/cpm-result.nix for what
+    # went wrong while these inputs were absent.
+    network-control-plane-model.url = "github:esp0xdeadbeef/network-control-plane-model";
+    network-control-plane-model.inputs.nixpkgs.follows = "nixpkgs";
+    network-control-plane-model.inputs.network-labs.follows = "network-labs";
+    network-labs.url = "github:esp0xdeadbeef/network-labs";
+    network-labs.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -12,6 +24,8 @@
       self,
       nixpkgs,
       network-realization-schema,
+      network-control-plane-model,
+      network-labs,
     }:
     let
       systems = [
@@ -21,7 +35,21 @@
       forAllSystems = function: nixpkgs.lib.genAttrs systems function;
       schema = network-realization-schema.lib;
       model = import ./src/default.nix { inherit schema; };
-      testsPass = import ./tests/default.nix { inherit model schema; };
+      # A CPM compiled by the real producer from a real intent, per system.
+      # The hand-written example is still used for the unit cases (its shape is
+      # deliberate and its field values are asserted by every peer renderer),
+      # but nothing here may claim the production path works without this one.
+      realCpmFor =
+        system:
+        network-control-plane-model.libBySystem.${system}.compileAndBuildFromPaths {
+          inputPath = "${network-labs}/examples/single-wan-uplink-static-egress/intent.nix";
+          inventoryPath = "${network-labs}/examples/single-wan-uplink-static-egress/inventory-nixos.nix";
+        };
+      testsPassFor = system:
+        import ./tests/default.nix {
+          inherit model schema;
+          realCpm = realCpmFor system;
+        };
       diagnosticCases = import ./tests/diagnostics.nix { inherit model schema; };
     in
     {
@@ -80,7 +108,7 @@
             )
           ) diagnosticCases;
         in
-        assert testsPass;
+        assert testsPassFor system;
         {
           realization-model = pkgs.runCommand "network-realization-model" { } ''
             mkdir -p "$out"

@@ -1,4 +1,4 @@
-{ model, schema }:
+{ model, schema, realCpm }:
 
 let
   input = import ../examples/cpm-result.nix;
@@ -12,6 +12,39 @@ let
     producerRevision = "fixture-realization-model";
   };
   first = model.realize args;
+
+  # The production path: a CPM compiled by the real producer from a real intent
+  # in network-labs. Everything above uses examples/cpm-result.nix, which is
+  # hand-written -- so without this, nothing in this repository's tests has ever
+  # been run against a CPM that a producer actually emits.
+  #
+  # Measured 2026-11-21: this realizes cleanly, and that is exactly why the gap
+  # went unseen -- `realize` does not require any particular optional collection,
+  # so a bundle can be produced and validated from a CPM that no peer renderer
+  # can map (the CPM publishes no `canonicalInterfaces`). The producer-boundary
+  # assertion therefore has to live where the field is consumed; see
+  # network-renderer-openconfig's `canonical-renderer-input` check.
+  realInput = {
+    kind = "network-control-plane-artifact";
+    artifactIdentity = "real-cpm-single-wan-uplink-static-egress";
+    artifactDigest = builtins.hashString "sha256" (builtins.toJSON realCpm.control_plane_model);
+    inherit (realCpm) control_plane_model;
+  };
+  realArgs = {
+    input = realInput;
+    requestScope = {
+      kind = "complete-artifact";
+      identity = "real-cpm-complete-artifact";
+    };
+    rootLockIdentity = "real-cpm-root-lock";
+    producerRevision = "network-control-plane-model";
+  };
+  realFirst = model.realize realArgs;
+  realSecond = model.realize realArgs;
+  realCoverage = model.validateUpstreamCoverage {
+    input = realInput;
+    candidate = realFirst;
+  };
   second = model.realize args;
   bindingBase = {
     kind = schema.schema.platformBinding.kind;
@@ -146,6 +179,10 @@ undeclaredSecretBinding =
     );
   };
 in
+assert realFirst.validation.valid;
+assert realFirst.validation.artifactIdentity == realFirst.bundleIdentity;
+assert model.assertDeterministic { first = realFirst; second = realSecond; };
+assert realCoverage.sourceCount == realCoverage.destinationCount;
 assert schema.validateBundle first != { };
 assert first.validation.valid;
 assert first.validation.artifactIdentity == first.bundleIdentity;
