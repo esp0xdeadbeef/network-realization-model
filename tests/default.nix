@@ -210,6 +210,14 @@ assert builtins.length realFirst.canonical.canonicalInterfaces > 0;
 assert builtins.length realFirst.canonical.canonicalRoutes > 0;
 # and the renderer boundary hands it over by that name
 assert realRendererInput.canonical.canonicalInterfaces == realCpm.control_plane_model.canonicalInterfaces;
+# A producer that hands over the BUILD RESULT (which wraps the envelope) must
+# still get its canonical collections projected. Measured 2026-11-22: the nixos
+# host pipeline did exactly that, `canonical` projected to `{ }`, and every
+# renderer that maps canonical content had nothing to map.
+assert
+  (model.canonicalFor { inherit (realCpm) control_plane_model; }).canonicalInterfaces
+  == (model.canonicalFor realCpm).canonicalInterfaces;
+assert builtins.length (model.canonicalFor realCpm).canonicalRoutes > 0;
 # The hand-written fixture publishes canonicalInterfaces too, and the bundle
 # carries it unchanged -- projection, not invention.
 assert first.canonical.canonicalInterfaces == input.control_plane_model.canonicalInterfaces;

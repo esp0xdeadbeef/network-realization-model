@@ -171,14 +171,43 @@ let
   canonicalFor =
     cpm:
     let
+      # A producer may hand over the CPM envelope, or a build result that wraps
+      # it (`{ control_plane_model = <envelope>; endpointInventory; ... }`).
+      # The producer's canonical collections live on the envelope, so accept
+      # both depths rather than making every producer reshape its artifact --
+      # the alternative is that one producer's extra wrapper silently strips
+      # every canonical collection from the bundle, and a renderer that maps
+      # canonical content gets nothing:
+      #
+      #   network-renderer-nebula: ... the bundle carries no canonical site
+      #   records
+      #
+      # Measured 2026-11-22: the nixos host pipeline passed the build result,
+      # so `canonical` projected to `{ }` while `network.data` still resolved
+      # through the schema's own fallback. The bundle looked valid and carried
+      # no canonical content, which is the worst of both.
+      carrier =
+        let
+          hasCollection = value:
+            builtins.isAttrs value
+            && builtins.any (
+              name: builtins.isList (value.${name} or null) || builtins.isAttrs (value.${name} or null)
+            ) schema.schema.bundle.canonicalCollections;
+        in
+        if hasCollection cpm then
+          cpm
+        else if hasCollection (cpm.control_plane_model or null) then
+          cpm.control_plane_model
+        else
+          cpm;
       present = builtins.filter (
-        name: builtins.isList (cpm.${name} or null) || builtins.isAttrs (cpm.${name} or null)
+        name: builtins.isList (carrier.${name} or null) || builtins.isAttrs (carrier.${name} or null)
       ) schema.schema.bundle.canonicalCollections;
     in
     builtins.listToAttrs (
       map (name: {
         inherit name;
-        value = cpm.${name};
+        value = carrier.${name};
       }) present
     );
 
