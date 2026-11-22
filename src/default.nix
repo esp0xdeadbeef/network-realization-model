@@ -154,6 +154,34 @@ let
     in
     map (name: byReference.${name}) (builtins.attrNames byReference);
 
+  # The bundle's platform-neutral network content.
+  #
+  # `network.data` is the producer's CPM, handed through unchanged. A renderer
+  # that reads it is reading the plain control-plane model, which
+  # RR_RAW_CPM_INPUT forbids; the bundle added validation, identity, provenance
+  # and coverage AROUND the CPM but no canonical content of its own. This
+  # projects the collections the producer already publishes onto the bundle, so
+  # a renderer can map canonical objects without reaching into the model.
+  #
+  # Only names the schema lists are projected, and only when the producer
+  # actually carries them: realization makes declared meaning executable, it
+  # does not manufacture a collection the CPM never emitted. A producer that
+  # publishes nothing yields no `canonical` section (and the renderer that needs
+  # one fails loudly where it is consumed).
+  canonicalFor =
+    cpm:
+    let
+      present = builtins.filter (
+        name: builtins.isList (cpm.${name} or null) || builtins.isAttrs (cpm.${name} or null)
+      ) schema.schema.bundle.canonicalCollections;
+    in
+    builtins.listToAttrs (
+      map (name: {
+        inherit name;
+        value = cpm.${name};
+      }) present
+    );
+
   collectCanonicalReferences =
     value:
     if builtins.isAttrs value then
@@ -379,6 +407,7 @@ let
           digest = sourceDigest;
         };
         network.data = cpm;
+        canonical = canonicalFor cpm;
         provenance = {
           producer = "network-realization-model";
           producerRepository = "network-realization-model";
@@ -597,6 +626,12 @@ let
           in
           builtins.deepSeq _bindingReleased checked;
       semanticModel = bundle.network.data;
+      # What a renderer may map. `canonical` is the producer's published
+      # collections projected by `makeCandidate`; a bundle realized before the
+      # section existed, or from a producer that publishes none, has no members
+      # here and a renderer that needs one must fail loudly rather than fall
+      # back to the model.
+      canonical = bundle.canonical or { };
       controlPlaneEnvelope =
         if semanticModel ? control_plane_model then
           semanticModel
@@ -607,6 +642,7 @@ let
       inherit
         bindingValidation
         bundleValidation
+        canonical
         controlPlaneEnvelope
         expectedTarget
         semanticModel
@@ -620,6 +656,7 @@ in
 {
   inherit
     assertDeterministic
+    canonicalFor
     coverageInvariants
     coverageRowsFor
     destinationFor

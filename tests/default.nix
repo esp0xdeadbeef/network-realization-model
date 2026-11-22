@@ -85,6 +85,10 @@ let
     platformBinding = binding;
     expectedTarget = "openconfig";
   };
+  realRendererInput = model.validateRendererInput {
+    bundle = realFirst;
+    expectedTarget = "nixos";
+  };
 
   # FS-161: protected references are opaque runtime references. The producer
   # projects every /run/secrets leaf the canonical content names, and unions
@@ -195,6 +199,20 @@ assert rendererInput.bundleIdentity == first.bundleIdentity;
 assert rendererInput.bindingIdentity == binding.bindingIdentity;
 assert rendererInput.validatedPlatformBinding == binding;
 assert rendererInput.controlPlaneEnvelope.control_plane_model == first.network.data;
+# RR_RAW_CPM_INPUT: the bundle must carry the producer's canonical collections
+# itself, so a renderer can map canonical objects without reading the model the
+# bundle wraps. `realInput` is a real producer CPM, and that producer publishes
+# canonicalInterfaces and canonicalRoutes.
+assert builtins.isAttrs realFirst.canonical;
+assert (realFirst.canonical.canonicalInterfaces or null) == realCpm.control_plane_model.canonicalInterfaces;
+assert (realFirst.canonical.canonicalRoutes or null) == realCpm.control_plane_model.canonicalRoutes;
+assert builtins.length realFirst.canonical.canonicalInterfaces > 0;
+assert builtins.length realFirst.canonical.canonicalRoutes > 0;
+# and the renderer boundary hands it over by that name
+assert realRendererInput.canonical.canonicalInterfaces == realCpm.control_plane_model.canonicalInterfaces;
+# The hand-written fixture publishes canonicalInterfaces too, and the bundle
+# carries it unchanged -- projection, not invention.
+assert first.canonical.canonicalInterfaces == input.control_plane_model.canonicalInterfaces;
 assert secretBundle.validation.valid;
 assert builtins.elem "/run/secrets/example-tenant-prefix" secretReferences;
 assert builtins.elem "/run/secrets/example-provider-prefix" secretReferences;
