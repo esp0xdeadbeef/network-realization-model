@@ -186,29 +186,54 @@ let
       # so `canonical` projected to `{ }` while `network.data` still resolved
       # through the schema's own fallback. The bundle looked valid and carried
       # no canonical content, which is the worst of both.
+      hasCollection =
+        value:
+        builtins.isAttrs value
+        && builtins.any (
+          name: builtins.isList (value.${name} or null) || builtins.isAttrs (value.${name} or null)
+        ) schema.schema.bundle.canonicalCollections;
+      nested = cpm.control_plane_model or null;
+      # Two carriers is an ambiguity, not a preference. If the artifact carries
+      # canonical collections at the top level AND wraps an envelope that
+      # carries different ones, projecting one of them silently chooses which
+      # producer statement is true. Refuse it: only the producer can say which
+      # is authoritative, and a guess here reaches every renderer.
+      _ambiguous =
+        if hasCollection cpm && hasCollection nested && builtins.toJSON (
+          builtins.listToAttrs (
+            map (name: { inherit name; value = cpm.${name}; }) (
+              builtins.filter (name: cpm ? ${name}) schema.schema.bundle.canonicalCollections
+            )
+          )
+        ) != builtins.toJSON (
+          builtins.listToAttrs (
+            map (name: { inherit name; value = nested.${name}; }) (
+              builtins.filter (name: nested ? ${name}) schema.schema.bundle.canonicalCollections
+            )
+          )
+        ) then
+          fail "NR_CANONICAL_CARRIER_AMBIGUOUS" "/canonical"
+            "the artifact carries canonical collections at both the top level and in the wrapped envelope, and they differ"
+        else
+          true;
       carrier =
-        let
-          hasCollection = value:
-            builtins.isAttrs value
-            && builtins.any (
-              name: builtins.isList (value.${name} or null) || builtins.isAttrs (value.${name} or null)
-            ) schema.schema.bundle.canonicalCollections;
-        in
         if hasCollection cpm then
           cpm
-        else if hasCollection (cpm.control_plane_model or null) then
-          cpm.control_plane_model
+        else if hasCollection nested then
+          nested
         else
           cpm;
       present = builtins.filter (
         name: builtins.isList (carrier.${name} or null) || builtins.isAttrs (carrier.${name} or null)
       ) schema.schema.bundle.canonicalCollections;
     in
-    builtins.listToAttrs (
-      map (name: {
-        inherit name;
-        value = carrier.${name};
-      }) present
+    builtins.deepSeq _ambiguous (
+      builtins.listToAttrs (
+        map (name: {
+          inherit name;
+          value = carrier.${name};
+        }) present
+      )
     );
 
   collectCanonicalReferences =

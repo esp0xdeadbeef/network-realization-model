@@ -218,6 +218,19 @@ assert
   (model.canonicalFor { inherit (realCpm) control_plane_model; }).canonicalInterfaces
   == (model.canonicalFor realCpm).canonicalInterfaces;
 assert builtins.length (model.canonicalFor realCpm).canonicalRoutes > 0;
+# The carrier must be unambiguous. A producer that publishes canonical
+# collections at BOTH the top level and in the wrapped envelope, with different
+# values, is making two contradictory statements, and picking one here would
+# choose what every renderer sees. Fail closed instead.
+assert
+  let
+    probe = value: { canonicalInterfaces = [ { marker = value; } ]; };
+    accepted = v: (builtins.tryEval (builtins.deepSeq (model.canonicalFor v) true)).success;
+  in
+  accepted (probe 1)
+  && accepted { control_plane_model = probe 1; }
+  && accepted ((probe 1) // { control_plane_model = probe 1; })
+  && !(accepted ((probe 1) // { control_plane_model = probe 2; }));
 # The hand-written fixture publishes canonicalInterfaces too, and the bundle
 # carries it unchanged -- projection, not invention.
 assert first.canonical.canonicalInterfaces == input.control_plane_model.canonicalInterfaces;
