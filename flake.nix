@@ -5,6 +5,13 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     network-realization-schema.url = "github:esp0xdeadbeef/network-realization-schema";
     network-realization-schema.inputs.nixpkgs.follows = "nixpkgs";
+    # The schema pins a producer for its own cross-repository audit tests. Point
+    # those at the same revisions this repository already uses instead of
+    # resolving a second copy: one producer per lock, or "what the schema was
+    # tested against" and "what this bundle was realized from" drift apart
+    # silently inside one lock file.
+    network-realization-schema.inputs.network-control-plane-model.follows = "network-control-plane-model";
+    network-realization-schema.inputs.network-labs.follows = "network-labs";
 
     # A producer, so the tests can realise a REAL CPM and not only the
     # hand-written one in examples/cpm-result.nix. This repository has no
