@@ -58,10 +58,13 @@ for name in "${names[@]}"; do
     source "${_file}"
   ' _ "${test_dir}/${name}" >"${log}" 2>&1 || status=$?
 
-  if ((status == 0)) && grep -q '^SKIP ' "${log}"; then
-    printf 'SKIP %s\n' "${name}"
+  if grep -q '^SKIP ' "${log}"; then
+    # Not a verdict: see tests/run-one.sh. A skipped case reads as green in any
+    # summary, so it is reported as a failure here.
+    printf 'FAIL %s (declared SKIP)\n' "${name}" >&2
     grep '^SKIP ' "${log}" >&2 || true
-    skipped=$((skipped + 1))
+    failed=$((failed + 1))
+    failed_names+=("${name}")
   elif ((status == 0)); then
     printf 'PASS %s\n' "${name}"
     passed=$((passed + 1))
