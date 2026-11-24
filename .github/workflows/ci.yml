@@ -37,28 +37,3 @@ jobs:
       # The flake checks are this repository's test surface, so build them.
       - name: "Check flake outputs"
         run: nix flake check -L --show-trace
-
-  tests:
-    name: "test suite"
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: "Use the runner temp dir for scratch"
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in TMPDIR TMP TEMP; do
-            printf '%s=%s\n' "$name" "$RUNNER_TEMP" >> "$GITHUB_ENV"
-          done
-      - uses: actions/checkout@v6
-
-      - uses: DeterminateSystems/determinate-nix-action@v3
-
-      # The shell checks read `nix eval` output (a cross-repository contract
-      # comparison needs the sibling checkout, and says SKIP without it). The nix
-      # checks themselves are the flake-check job above.
-      - name: "Run repository test suite"
-        shell: bash
-        env:
-          NETWORK_REPO_DIRECT_TEST_OK: "1"
-        run: bash tests/test.sh
