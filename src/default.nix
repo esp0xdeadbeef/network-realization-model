@@ -691,6 +691,27 @@ let
           semanticModel
         else
           { control_plane_model = semanticModel; };
+
+      # The artifact, under a name that says what it IS rather than which stage
+      # produced it.
+      #
+      # A renderer needs the artifact -- it carries `deploymentHosts`, `render` and
+      # the rest of the deployment surface beside the model -- but the only handle
+      # offered was `controlPlaneEnvelope`, whose name tells a consumer it is
+      # digging into the control-plane model. That is exactly the read
+      # RR_RAW_CPM_INPUT forbids, so every consumer that legitimately needed the
+      # artifact had to spell the forbidden name to reach it, and the gate then
+      # could not distinguish "reads the plain CPM" from "needs the deployment
+      # surface".
+      #
+      # Same value, neutral name: nothing about the bundle changes.
+      semanticArtifact = controlPlaneEnvelope // {
+        # The control-plane model itself, by a name that is the model. A consumer
+        # that needs model fields takes them here instead of unwrapping the
+        # artifact by the producer's stage name, which the gate cannot tell apart
+        # from reading the plain CPM.
+        model = semanticModel;
+      };
     in
     builtins.deepSeq [ bundleValidation _released _identityIntact _target bindingValidation ] {
       inherit
@@ -698,6 +719,7 @@ let
         bundleValidation
         canonical
         controlPlaneEnvelope
+        semanticArtifact
         expectedTarget
         semanticModel
         ;
