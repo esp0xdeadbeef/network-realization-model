@@ -223,11 +223,45 @@ let
           nested
         else
           cpm;
+      # The producer's published canonical collections, whichever name the
+      # producer gave the stage it wraps them in.
+      #
+      # FS-310-HDS-040-SDS-010-SMS-100 (canonical-only consumption): the schema's
+      # `bundle.canonicalCollections` list is CLOSED, and the projection two
+      # lines below filters by it. That filter is where a collection the producer
+      # publishes -- and the schema does not list -- is DROPPED. It is dropped
+      # here, before any renderer exists, from a bundle that still validates; the
+      # only symptom downstream is a renderer with nothing to map, which reads as
+      # a renderer bug and is not one.
+      #
+      # Measured on the current tree: the producer publishes `canonicalForwarding`
+      # and `canonicalOverlays`, the schema lists neither, so both vanish from
+      # every bundle while the schema's own comment claims the list is "named
+      # exactly as the producer publishes them".
+      #
+      # Fail here, at the loss, and name the file that has to change. The repair
+      # (adding the names to the closed set) is a separate change to
+      # network-realization-schema; until it lands the model refuses to produce a
+      # silently incomplete bundle, which is the correct outcome.
+      publishedCanonical = builtins.filter (
+        name:
+        hasPrefix "canonical" name
+        && (builtins.isList (carrier.${name} or null) || builtins.isAttrs (carrier.${name} or null))
+      ) (builtins.attrNames carrier);
+      unlistedCollections = builtins.filter (
+        name: !(builtins.elem name schema.schema.bundle.canonicalCollections)
+      ) publishedCanonical;
+      _complete =
+        if unlistedCollections == [ ] then
+          true
+        else
+          fail "NR_CANONICAL_COLLECTION_DROPPED" "/canonical/${builtins.head unlistedCollections}"
+            "FS-310-HDS-040-SDS-010-SMS-100: the producer publishes '${builtins.head unlistedCollections}', but network-realization-schema/schema/default.nix -> bundle.canonicalCollections does not list it, so this projection would drop it and hand every renderer a bundle that validates and is missing published facts. Add it to that list (and remove the names the producer no longer publishes) in the schema, or stop publishing it in the producer: ${builtins.concatStringsSep ", " unlistedCollections}";
       present = builtins.filter (
         name: builtins.isList (carrier.${name} or null) || builtins.isAttrs (carrier.${name} or null)
       ) schema.schema.bundle.canonicalCollections;
     in
-    builtins.deepSeq _ambiguous (
+    builtins.deepSeq [ _ambiguous _complete ] (
       builtins.listToAttrs (
         map (name: {
           inherit name;

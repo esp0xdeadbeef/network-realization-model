@@ -296,4 +296,22 @@ in
       expectedTarget = "clab";
     };
   };
+
+  # FS-310-HDS-040-SDS-010-SMS-100: the bundle projection filters the producer's
+  # canonical collections through the schema's CLOSED list, so a collection the
+  # producer publishes and the schema does not list is dropped silently, at
+  # construction, from a bundle that still validates. Seeded here with a
+  # collection the schema does not list (`canonicalOverlays`): the projection must
+  # throw instead of producing a bundle that is missing published facts.
+  canonicalCollectionDropped = {
+    expected = "NR_CANONICAL_COLLECTION_DROPPED: /canonical/canonicalOverlays: FS-310-HDS-040-SDS-010-SMS-100:";
+    value = model.makeCandidate {
+      input = input // {
+        control_plane_model = input.control_plane_model // {
+          canonicalOverlays = [ ];
+        };
+      };
+      inherit (args) requestScope rootLockIdentity producerRevision;
+    };
+  };
 }
