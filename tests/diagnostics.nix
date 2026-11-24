@@ -82,14 +82,24 @@ let
       // candidate.network.data;
     }
   );
-  orphanPath = rehash (
-    candidate
-    // {
-      network.data = candidate.network.data // {
-        orphanField = "orphan-value";
-      };
-    }
-  );
+  # A canonical record the producer published with no GAMP accounting row: its
+  # `canonicalPath` is not a leaf of `network.data`, so nothing upstream produced it.
+  # FS-310-HDS-040-SDS-010-SMS-100: such a record is not a canonical object, and the
+  # projection drops it instead of carrying it as an "orphan".
+  incoherentInput = input // {
+    control_plane_model = input.control_plane_model // {
+      canonicalInterfaces = input.control_plane_model.canonicalInterfaces ++ [
+        {
+          canonicalPath = "/network/data/canonicalInterfaces/9999";
+          identity.name = "record-with-no-accounting-row";
+        }
+      ];
+    };
+  };
+  incoherentCandidate = model.makeCandidate (args // { input = incoherentInput; });
+  incoherentRetained = builtins.any (
+    record: (record.identity.name or "") == "record-with-no-accounting-row"
+  ) (incoherentCandidate.canonical.canonicalInterfaces or [ ]);
   unsupportedRequired = rehash (
     candidate
     // {
@@ -221,16 +231,19 @@ in
       candidate = badDestination;
     };
   };
-  # With the accounting derived from network content, a canonical path that has
-  # no CPM authority is rejected as an unaccounted destination before it can
-  # become an orphan. Fail-closed either way; this names the first observable
-  # failure.
-  orphanCanonical = {
-    expected = "NR_UPSTREAM_DESTINATION_INVALID:";
-    value = model.validateUpstreamCoverage {
-      inherit input;
-      candidate = orphanPath;
-    };
+  # FS-310-HDS-040-SDS-010-SMS-100: no orphan canonical record is allowed, so one is
+  # not REPORTED -- it is dropped at the projection, and the bundle it produced cannot
+  # be told apart from a bundle the producer never published it into, except by its
+  # length. The check fires with the sentinel below when the record is gone, and with a
+  # different message when it survived, which is what makes it a check and not a
+  # comment.
+  incoherentCanonicalDropped = {
+    expected = "INCOHERENT-CANONICAL-DROPPED:";
+    value =
+      if incoherentRetained then
+        throw "INCOHERENT-CANONICAL-RETAINED: FS-310-HDS-040-SDS-010-SMS-100 violated -- a canonical record with no GAMP accounting row survived the projection"
+      else
+        throw "INCOHERENT-CANONICAL-DROPPED: FS-310-HDS-040-SDS-010-SMS-100: the canonical record with no accounting row is not carried in the bundle";
   };
   unsupportedRequirement = {
     expected = "NR_UNSUPPORTED_REQUIRED_SEMANTIC:";
@@ -304,11 +317,11 @@ in
   # collection the schema does not list (`canonicalOverlays`): the projection must
   # throw instead of producing a bundle that is missing published facts.
   canonicalCollectionDropped = {
-    expected = "NR_CANONICAL_COLLECTION_DROPPED: /canonical/canonicalOverlays: FS-310-HDS-040-SDS-010-SMS-100:";
+    expected = "NR_CANONICAL_COLLECTION_DROPPED: /canonical/canonicalByteIndependenceProbe: FS-310-HDS-040-SDS-010-SMS-100:";
     value = model.makeCandidate {
       input = input // {
         control_plane_model = input.control_plane_model // {
-          canonicalOverlays = [ ];
+          canonicalByteIndependenceProbe = [ ];
         };
       };
       inherit (args) requestScope rootLockIdentity producerRevision;

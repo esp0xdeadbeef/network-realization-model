@@ -373,7 +373,6 @@ let
       duplicateSources = duplicates coverageSourcePaths;
       missingSources = difference sourcePaths coverageSourcePaths;
       unexpectedSources = difference coverageSourcePaths sourcePaths;
-      missingDestinations = difference canonicalPaths coverageDestinationPaths;
       invalidDestinations = difference coverageDestinationPaths canonicalPaths;
       unknownRules = builtins.filter (
         row: (row.transformationRule or null) != "cpm-identity-v1"
@@ -405,11 +404,6 @@ let
         else
           fail "NR_UPSTREAM_DESTINATION_INVALID" (builtins.head invalidDestinations)
             "destination path is absent";
-      _orphan =
-        if missingDestinations == [ ] then
-          true
-        else
-          fail "NR_ORPHAN_CANONICAL_PATH" (builtins.head missingDestinations) "no upstream source";
       _rule =
         if unknownRules == [ ] then
           true
@@ -436,7 +430,6 @@ let
         _missing
         _unexpected
         _destination
-        _orphan
         _rule
         _provenance
         _unsupported
@@ -469,6 +462,78 @@ let
     else
       fail "NR_SCOPE_ESCAPE" (builtins.head escaped) "path is outside the declared request scope";
 
+  # FS-310-HDS-040-SDS-010-SMS-100 (canonical-only consumption) and FS-161 (the
+  # canonical path is the trace): a canonical record is part of the artifact only
+  # when the GAMP chain accounts for it. "Accounts for it" is not an opinion here:
+  # `schema.canonicalCoverageRows` derives one row per CPM leaf, and a record whose
+  # `canonicalPath` has no row was published by the producer without a source
+  # statement.
+  #
+  # Such a record used to be carried and diagnosed as an ORPHAN
+  # (`NR_ORPHAN_CANONICAL_PATH`). An orphan is not a classification the model may
+  # hold: a path nothing upstream produced is not a canonical object, it is a
+  # stray, and carrying it hands every renderer a record with no file, no row and
+  # no trace ID behind it. It is DROPPED at the projection, so the bug it produces
+  # is "the collection is short one member" -- visible against the producer's own
+  # list -- instead of "one record in the collection is untraceable" -- visible
+  # only if somebody audits every path.
+  #
+  # The filter is shape-agnostic on purpose: the producer's collections are lists
+  # (interfaces, routes, rules) and nested attrsets (sites.byEnterprise,
+  # runtimeTargets.targets). Any attrs value carrying a `canonicalPath` is a record
+  # and is tested; everything else is walked.
+  dropUnaccountedCanonical =
+    cpm: value:
+    let
+      # A published record's `canonicalPath` names a location in the producer's own
+      # model. Coherence with the GAMP chain is exactly this: the location exists. The
+      # coverage rows are derived from the same model's leaves, so "some row accounts for
+      # it" and "the model has it" are the same statement, and this is the cheap form --
+      # one attribute path walk per record instead of a scan over every leaf.
+      #
+      # `/network/data` is the bundle-side root; the model is that subtree.
+      stripRoot =
+        path:
+        if builtins.substring 0 13 path == "/network/data" then
+          builtins.substring 13 (builtins.stringLength path - 13) path
+        else
+          path;
+      resolves =
+        path:
+        let
+          segments = builtins.filter (part: builtins.isString part && part != "") (
+            builtins.split "/" (stripRoot path)
+          );
+          step =
+            node: segment:
+            if builtins.isList node then
+              let
+                index = builtins.fromJSON segment;
+              in
+              if builtins.isInt index && index >= 0 && index < builtins.length node then
+                builtins.elemAt node index
+              else
+                null
+            else if builtins.isAttrs node && node ? ${segment} then
+              node.${segment}
+            else
+              null;
+        in
+        segments != [ ] && (builtins.foldl' step cpm segments) != null;
+      keep =
+        item:
+        !(builtins.isAttrs item) || !(item ? canonicalPath) || resolves item.canonicalPath;
+      walk =
+        node:
+        if builtins.isList node then
+          builtins.filter keep (map walk node)
+        else if builtins.isAttrs node then
+          builtins.mapAttrs (_name: child: walk child) node
+        else
+          node;
+    in
+    walk value;
+
   makeCandidate =
     {
       input,
@@ -495,7 +560,7 @@ let
           digest = sourceDigest;
         };
         network.data = cpm;
-        canonical = canonicalFor cpm;
+        canonical = dropUnaccountedCanonical cpm (canonicalFor cpm);
         provenance = {
           producer = "network-realization-model";
           producerRepository = "network-realization-model";
@@ -713,38 +778,93 @@ let
             };
           in
           builtins.deepSeq _bindingReleased checked;
-      semanticModel = bundle.network.data;
-      # What a renderer may map. `canonical` is the producer's published
-      # collections projected by `makeCandidate`; a bundle realized before the
-      # section existed, or from a producer that publishes none, has no members
-      # here and a renderer that needs one must fail loudly rather than fall
-      # back to the model.
-      canonical = bundle.canonical or { };
-      controlPlaneEnvelope =
-        if semanticModel ? control_plane_model then
-          semanticModel
-        else
-          { control_plane_model = semanticModel; };
+      # FS-310-HDS-040-SDS-010-SMS-100 — RENDERER CANONICAL-ONLY CONSUMPTION
+      #
+      # The row says: "Every `network-renderer-*` module shall receive network-semantic
+      # input only as one validated canonical realization bundle ... CPM output is
+      # upstream authority consumed by `network-realization-model`; it is not a public
+      # renderer input", and its rejection list names "CPM output, peer-renderer output,
+      # unvalidated sidecars, and renderer-local parallel network models".
+      #
+      # The bundle still CARRIES the producer artifact: `computeBundleIdentity` hashes
+      # it, coverage counts it, and `schema.validateBundle` reads it. What changes here
+      # is the HANDOVER. This function used to return `semanticModel`, `semanticArtifact`
+      # and `controlPlaneEnvelope` -- three names for `bundle.network.data`, the plain
+      # control-plane model -- and the comment on `semanticArtifact` said so: "Same
+      # value, neutral name: nothing about the bundle changes". A renderer that read
+      # `cpm.model.canonicalSites` through that name was reading raw CPM while every
+      # gate reported canonical consumption, which is why the schema's closed-set drift
+      # could drop two published collections from every bundle and no renderer noticed.
+      #
+      # The names are kept and THROW rather than deleted: a deleted attribute fails as
+      # "attribute missing", which reads as a typo and gets repaired with `or { }` --
+      # the silent-substitution shape this row exists to prevent. A throw names the row,
+      # says what to map instead, and refuses the fallback in the same sentence.
+      withdrawn =
+        what:
+        throw (
+          "FS-310-HDS-040-SDS-010-SMS-100: '${what}' is not a renderer input. A renderer "
+          + "receives network semantics only as the validated bundle's 'canonical' "
+          + "collections; the plain control-plane model the bundle wraps is upstream "
+          + "authority for network-realization-model and is not a public renderer input. "
+          + "Repair the renderer: map 'canonical.<collection>' and keep the canonical path "
+          + "it came from. Do not add a raw-CPM fallback here -- a renderer-local parallel "
+          + "network model is the same violation in a different shape."
+        );
 
-      # The artifact, under a name that says what it IS rather than which stage
-      # produced it.
-      #
-      # A renderer needs the artifact -- it carries `deploymentHosts`, `render` and
-      # the rest of the deployment surface beside the model -- but the only handle
-      # offered was `controlPlaneEnvelope`, whose name tells a consumer it is
-      # digging into the control-plane model. That is exactly the read
-      # RR_RAW_CPM_INPUT forbids, so every consumer that legitimately needed the
-      # artifact had to spell the forbidden name to reach it, and the gate then
-      # could not distinguish "reads the plain CPM" from "needs the deployment
-      # surface".
-      #
-      # Same value, neutral name: nothing about the bundle changes.
-      semanticArtifact = controlPlaneEnvelope // {
-        # The control-plane model itself, by a name that is the model. A consumer
-        # that needs model fields takes them here instead of unwrapping the
-        # artifact by the producer's stage name, which the gate cannot tell apart
-        # from reading the plain CPM.
-        model = semanticModel;
+      semanticModel = withdrawn "semanticModel";
+      controlPlaneEnvelope = withdrawn "controlPlaneEnvelope";
+      semanticArtifact = withdrawn "semanticArtifact";
+
+      # What a renderer MAY map. `canonical` is the producer's published collections
+      # projected by `canonicalFor`; a bundle from a producer that publishes none has no
+      # members here, and a renderer that needs one must fail loudly at that access
+      # rather than fall back to the model (the throw above is the fallback's dead end).
+      canonical =
+        if bundle ? canonical then
+          bundle.canonical
+        else
+          throw (
+            "FS-310-HDS-040-SDS-010-SMS-100: the bundle carries no 'canonical' section, so "
+            + "this renderer has nothing it is allowed to map. The projection is done by "
+            + "network-realization-model/lib.realize -> canonicalFor; a bundle without it "
+            + "was built outside the producer handoff."
+          );
+
+      # The renderer-facing view, for consumers that serialise the input instead of
+      # reading attributes in Nix (the ContainerLab backend writes JSON). It contains the
+      # canonical collections and the stamps that bind them, and deliberately no
+      # `network` key: a serialised renderer input that carries the raw artifact is the
+      # same bypass with a file in between.
+      rendererInput = {
+        inherit
+          canonical
+          expectedTarget
+          bindingValidation
+          bundleValidation
+          ;
+        requestScope = bundle.requestScope;
+        # The canonical section's own digest, so a consumer that only ever sees this
+        # projection can still tell whether the collections changed. The full-bundle
+        # identity covers `network` too, which is exactly the part this view withholds;
+        # recomputing it here would require the artifact back, so the projection
+        # carries its own binding instead.
+        canonicalDigest = builtins.hashString "sha256" (
+          builtins.toJSON (builtins.listToAttrs (map (name: { inherit name; value = canonical.${name}; }) (builtins.attrNames canonical)))
+        );
+        schemaSetIdentity = bundle.provenance.schemaSetIdentity or null;
+        bundleIdentity = bundle.bundleIdentity;
+        bindingIdentity = if platformBinding == null then null else platformBinding.bindingIdentity;
+        validatedPlatformBinding = platformBinding;
+        provenance = bundle.provenance or { };
+        validation = bundle.validation or { };
+        withheld = [
+          "network"
+          "network.data"
+          "semanticModel"
+          "semanticArtifact"
+          "controlPlaneEnvelope"
+        ];
       };
     in
     builtins.deepSeq [ bundleValidation _released _identityIntact _target bindingValidation ] {
@@ -755,6 +875,7 @@ let
         controlPlaneEnvelope
         semanticArtifact
         expectedTarget
+        rendererInput
         semanticModel
         ;
       bundleIdentity = bundle.bundleIdentity;

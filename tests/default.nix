@@ -198,7 +198,20 @@ assert bindingValidation.valid;
 assert rendererInput.bundleIdentity == first.bundleIdentity;
 assert rendererInput.bindingIdentity == binding.bindingIdentity;
 assert rendererInput.validatedPlatformBinding == binding;
-assert rendererInput.controlPlaneEnvelope.control_plane_model == first.network.data;
+# FS-310-HDS-040-SDS-010-SMS-100: the plain control-plane model is NOT a renderer
+# input. The bundle still carries it (identity and coverage are computed over it), but
+# every handle that used to hand it over now throws with the row in the message. This
+# assertion used to read `rendererInput.controlPlaneEnvelope.control_plane_model ==
+# first.network.data` -- it was the proof of the bypass, and it passed while every
+# renderer that mapped raw model fields was in violation.
+assert !(builtins.tryEval (builtins.deepSeq rendererInput.controlPlaneEnvelope true)).success;
+assert !(builtins.tryEval (builtins.deepSeq rendererInput.semanticArtifact true)).success;
+assert !(builtins.tryEval (builtins.deepSeq rendererInput.semanticModel true)).success;
+# The renderer-facing view is canonical-only, and says so: a serialised input must not
+# carry the artifact, because a file is not a boundary.
+assert !(rendererInput.rendererInput ? network);
+assert !(rendererInput.rendererInput ? network.data);
+assert rendererInput.rendererInput.canonical == rendererInput.canonical;
 # RR_RAW_CPM_INPUT: the bundle must carry the producer's canonical collections
 # itself, so a renderer can map canonical objects without reading the model the
 # bundle wraps. `realInput` is a real producer CPM, and that producer publishes
