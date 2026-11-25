@@ -891,7 +891,7 @@ let
       # A renderer that wants the structure no longer has to build its own.
       structuralView = structuralViewFor {
         inherit canonical;
-        inherit (bundle) platformBinding;
+        platformBinding = bundle.platformBinding or null;
       };
     };
 in
