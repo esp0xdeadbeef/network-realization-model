@@ -616,6 +616,44 @@ let
       candidate = makeCandidate args;
     };
 
+  # The producer-side handoff, for a caller that holds a CPM and nothing else.
+  #
+  # `realize` takes a network-control-plane-artifact: the CPM plus the identity and
+  # digest of the artifact that carries it. Every caller that starts from a CPM was
+  # writing that envelope itself, which is producer work sitting in a renderer --
+  # and the renderer's own no-raw-CPM guard then flagged the `control_plane_model`
+  # literal it had to write (network-renderer-nixos: "RR_RAW_CPM_INPUT: this renderer
+  # takes network semantics from the plain control-plane model", pointing at the
+  # envelope construction, not at a read).
+  #
+  # Building the envelope belongs here, next to `realize`: a renderer then hands its
+  # CPM over and maps the bundle, and the word `control_plane_model` never appears in
+  # the renderer at all.
+  realizeFromCpm =
+    { cpm
+    , requestScope ? {
+        kind = "complete-artifact";
+        identity = "cpm";
+      }
+    , rootLockIdentity ? "unspecified"
+    , producerRevision ? "unspecified"
+    , identityPrefix ? "cpm"
+    }:
+    let
+      # A producer may hand over the envelope or a build result that wraps it.
+      controlPlaneModel = if builtins.isAttrs cpm && cpm ? control_plane_model then cpm.control_plane_model else cpm;
+      digest = builtins.hashString "sha256" (builtins.toJSON controlPlaneModel);
+    in
+    realize {
+      input = {
+        kind = "network-control-plane-artifact";
+        artifactIdentity = "${identityPrefix}-${builtins.substring 0 16 digest}";
+        artifactDigest = digest;
+        control_plane_model = controlPlaneModel;
+      };
+      inherit requestScope rootLockIdentity producerRevision;
+    };
+
   assertDeterministic =
     { first, second }:
     if
@@ -916,6 +954,7 @@ in
     makeCandidate
     protectedReferencesFor
     realize
+    realizeFromCpm
     release
     sourceDigestFor
     structuralViewFor
