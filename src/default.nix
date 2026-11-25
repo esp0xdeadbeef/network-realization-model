@@ -891,7 +891,17 @@ let
       # A renderer that wants the structure no longer has to build its own.
       structuralView = structuralViewFor {
         inherit canonical;
-        platformBinding = bundle.platformBinding or null;
+        # The binding THIS call validated, not `bundle.platformBinding`: a realized
+        # bundle carries no platform binding (it is supplied per renderer, not at
+        # realize time), so reading it from the bundle always yielded `null`. The
+        # view's `deploymentHosts` and `deployment` were therefore empty for every
+        # input, and a renderer using the view lost the host's uplink facts --
+        # bridge uplinks, management VLAN -- and rendered no uplink netdevs at all:
+        # no vlan2 bridge, no eth0.2, no eth0 parent network, no DHCP on vlan2.
+        #
+        # `platformBinding` here is the argument this call validated -- the same value
+        # it returns as `validatedPlatformBinding`.
+        inherit platformBinding;
         collectionNames = schema.schema.bundle.rendererView.collections;
       };
     };
