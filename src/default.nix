@@ -892,6 +892,7 @@ let
       structuralView = structuralViewFor {
         inherit canonical;
         platformBinding = bundle.platformBinding or null;
+        collectionNames = schema.schema.bundle.rendererView.collections;
       };
     };
 in

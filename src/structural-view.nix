@@ -29,6 +29,10 @@
 {
   canonical ? { },
   platformBinding ? null,
+  # The schema's closed set. The view is built FROM this list, so it cannot publish a
+  # collection the schema does not name, and a name the producer stopped publishing is
+  # simply absent rather than invented.
+  collectionNames,
 }:
 
 let
@@ -99,30 +103,24 @@ let
   deployment = bindingDeployment;
 
   # The canonical collections, under the names the producer's envelope uses, so a
-  # consumer maps them by name instead of reaching for `network.data`.
-  model = {
-    inherit data;
-    canonicalInterfaces = canonical.canonicalInterfaces or { };
-    canonicalRoutes = canonical.canonicalRoutes or [ ];
-    canonicalOverlays = canonical.canonicalOverlays or { };
-    canonicalSites = canonical.canonicalSites or { };
-    canonicalRuntimeTargets = canonical.canonicalRuntimeTargets or { };
-    canonicalForwarding = canonical.canonicalForwarding or { };
-  };
+  # consumer maps them by name instead of reaching for `network.data`. Built from the
+  # schema's list, not from a second copy of it: a renderer can only ever see names the
+  # schema knows.
+  publishedCanonical = builtins.listToAttrs (
+    map (name: {
+      inherit name;
+      value = canonical.${name};
+    }) (builtins.filter (name: canonical ? ${name}) collectionNames)
+  );
+
+  model = { inherit data; } // publishedCanonical;
 in
 {
   inherit model deploymentHosts deployment;
 
+  canonical = canonical;
+
   # The flat collections, for a consumer that maps them directly rather than
   # through the structural envelope.
-  inherit (canonical)
-    canonicalInterfaces
-    canonicalRoutes
-    canonicalOverlays
-    canonicalSites
-    canonicalRuntimeTargets
-    canonicalForwarding
-    ;
-
-  canonical = canonical;
+  inherit publishedCanonical;
 }
