@@ -168,6 +168,10 @@ let
   # does not manufacture a collection the CPM never emitted. A producer that
   # publishes nothing yields no `canonical` section (and the renderer that needs
   # one fails loudly where it is consumed).
+  # The renderer-facing view, built from the schema's canonical collections only.
+  # See src/structural-view.nix for why it lives here and not in a renderer.
+  structuralViewFor = import ./structural-view.nix;
+
   canonicalFor =
     cpm:
     let
@@ -882,6 +886,13 @@ let
       bindingIdentity = if platformBinding == null then null else platformBinding.bindingIdentity;
       validatedPlatformBinding = platformBinding;
       requestScope = bundle.requestScope;
+      # What a renderer maps: the canonical collections, plus the structured
+      # envelope the renderer modules read, derived from those collections alone.
+      # A renderer that wants the structure no longer has to build its own.
+      structuralView = structuralViewFor {
+        inherit canonical;
+        inherit (bundle) platformBinding;
+      };
     };
 in
 {
@@ -896,6 +907,7 @@ in
     realize
     release
     sourceDigestFor
+    structuralViewFor
     validatePlatformBindingAgainstBundle
     validateProducerAccounting
     validateRendererInput
